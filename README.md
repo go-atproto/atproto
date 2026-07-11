@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/go-atproto/brand/main/social/go-atproto.png" alt="go-atproto/atproto" width="720"></p>
+
 # atproto
 
 [![CI](https://github.com/go-atproto/atproto/actions/workflows/ci.yml/badge.svg)](https://github.com/go-atproto/atproto/actions/workflows/ci.yml)
