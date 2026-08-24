@@ -350,3 +350,63 @@ func TestGetFeedErrorStatusEmptyErrorField(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestSearchActorsSuccess(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		io.WriteString(w, `{"actors":[{"did":"did:plc:abc","handle":"alice.bsky.social","displayName":"Alice","description":"hi there","avatar":"https://cdn/av.jpg"}],"cursor":"c1"}`)
+	}))
+	defer srv.Close()
+
+	c := New(WithService(srv.URL))
+	page, err := c.SearchActors(context.Background(), "alice", 25, "c0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/xrpc/app.bsky.actor.searchActors" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotQuery != "cursor=c0&limit=25&q=alice" {
+		t.Fatalf("query = %q", gotQuery)
+	}
+	if page.Cursor != "c1" || len(page.Actors) != 1 {
+		t.Fatalf("page = %+v", page)
+	}
+	a := page.Actors[0]
+	if a.DID != "did:plc:abc" || a.Handle != "alice.bsky.social" || a.DisplayName != "Alice" || a.Description != "hi there" || a.Avatar != "https://cdn/av.jpg" {
+		t.Fatalf("actor = %+v", a)
+	}
+}
+
+func TestSearchActorsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"actors":[],"cursor":""}`)
+	}))
+	defer srv.Close()
+	page, err := New(WithService(srv.URL)).SearchActors(context.Background(), "nobody", 0, "")
+	if err != nil || len(page.Actors) != 0 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+}
+
+func TestSearchActorsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":"InvalidRequest","message":"bad q"}`)
+	}))
+	defer srv.Close()
+	if _, err := New(WithService(srv.URL)).SearchActors(context.Background(), "x", 0, ""); err == nil {
+		t.Fatal("expected an error on a 400 response")
+	}
+}
+
+func TestSearchActorsMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{not json`)
+	}))
+	defer srv.Close()
+	if _, err := New(WithService(srv.URL)).SearchActors(context.Background(), "x", 0, ""); err == nil {
+		t.Fatal("expected a JSON decode error")
+	}
+}

@@ -100,6 +100,21 @@ type Feed struct {
 	Cursor string
 }
 
+// Actor is a Bluesky account profile returned by an actor search.
+type Actor struct {
+	DID         string
+	Handle      string // e.g. "alice.bsky.social" (follow as @<Handle>)
+	DisplayName string
+	Description string
+	Avatar      string
+}
+
+// ActorPage is a page of actors with an optional pagination cursor.
+type ActorPage struct {
+	Actors []Actor
+	Cursor string
+}
+
 // imagesEmbedType is the $type of the hydrated images embed view.
 const imagesEmbedType = "app.bsky.embed.images#view"
 
@@ -146,6 +161,33 @@ type wireImage struct {
 	Thumb    string `json:"thumb"`
 	Fullsize string `json:"fullsize"`
 	Alt      string `json:"alt"`
+}
+
+type wireActorPage struct {
+	Actors []wireActorProfile `json:"actors"`
+	Cursor string             `json:"cursor"`
+}
+
+type wireActorProfile struct {
+	DID         string `json:"did"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	Avatar      string `json:"avatar"`
+}
+
+func (w wireActorPage) toActorPage() *ActorPage {
+	p := &ActorPage{Cursor: w.Cursor}
+	for _, a := range w.Actors {
+		p.Actors = append(p.Actors, Actor{
+			DID:         a.DID,
+			Handle:      a.Handle,
+			DisplayName: a.DisplayName,
+			Description: a.Description,
+			Avatar:      a.Avatar,
+		})
+	}
+	return p
 }
 
 func (w wireFeed) toFeed() *Feed {
@@ -251,6 +293,16 @@ func (c *Client) SearchPosts(ctx context.Context, q string, limit int, cursor st
 	return c.getFeed(ctx, "app.bsky.feed.searchPosts", v)
 }
 
+// SearchActors returns the accounts matching q via app.bsky.actor.searchActors,
+// a public (unauthenticated) read on the default AppView — used to discover
+// accounts to follow. limit caps the page (0 = server default); cursor pages.
+func (c *Client) SearchActors(ctx context.Context, q string, limit int, cursor string) (*ActorPage, error) {
+	v := url.Values{}
+	v.Set("q", q)
+	setLimitCursor(v, limit, cursor)
+	return c.getActors(ctx, "app.bsky.actor.searchActors", v)
+}
+
 // Timeline returns the authenticated user's home timeline via
 // app.bsky.feed.getTimeline. It requires a prior successful Login.
 func (c *Client) Timeline(ctx context.Context, limit int, cursor string) (*Feed, error) {
@@ -271,8 +323,9 @@ func setLimitCursor(q url.Values, limit int, cursor string) {
 	}
 }
 
-// getFeed performs a GET XRPC call returning a feed shape.
-func (c *Client) getFeed(ctx context.Context, method string, q url.Values) (*Feed, error) {
+// getRaw performs a GET XRPC call and returns the 2xx response body, or an error
+// (transport, or an XRPC error for a non-2xx status).
+func (c *Client) getRaw(ctx context.Context, method string, q url.Values) ([]byte, error) {
 	endpoint := strings.TrimRight(c.Service, "/") + "/xrpc/" + method
 	if enc := q.Encode(); enc != "" {
 		endpoint += "?" + enc
@@ -299,12 +352,34 @@ func (c *Client) getFeed(ctx context.Context, method string, q url.Values) (*Fee
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, httpError(resp.StatusCode, data)
 	}
+	return data, nil
+}
 
+// getFeed performs a GET XRPC call returning a feed shape.
+func (c *Client) getFeed(ctx context.Context, method string, q url.Values) (*Feed, error) {
+	data, err := c.getRaw(ctx, method, q)
+	if err != nil {
+		return nil, err
+	}
 	var wf wireFeed
 	if err := json.Unmarshal(data, &wf); err != nil {
 		return nil, err
 	}
 	return wf.toFeed(), nil
+}
+
+// getActors performs a GET XRPC call returning an actor-list shape
+// ({actors,cursor}), used by the actor-search methods.
+func (c *Client) getActors(ctx context.Context, method string, q url.Values) (*ActorPage, error) {
+	data, err := c.getRaw(ctx, method, q)
+	if err != nil {
+		return nil, err
+	}
+	var wp wireActorPage
+	if err := json.Unmarshal(data, &wp); err != nil {
+		return nil, err
+	}
+	return wp.toActorPage(), nil
 }
 
 // httpError builds an error from a non-2xx response, including the XRPC error
